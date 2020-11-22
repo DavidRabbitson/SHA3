@@ -3,28 +3,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-const uint32_t RC[24] = {	0x00000001, 0x00008082, 0x0000808a,
-							0x80008000, 0x0000808b, 0x80000001,
-							0x80008081, 0x00008009, 0x0000008a,
-							0x00000088, 0x80008009, 0x8000000a,
-							0x8000808b, 0x0000008b, 0x00008089,
-							0x00008003, 0x00008002, 0x00000080,
-							0x0000800a, 0x8000000a, 0x80008081,
-							0x00008080, 0x80000001, 0x80008008};
-
-
-const uint32_t r[5][5] = {  {0,	  36,  3,   105, 210},
-							{1,   300, 10,  45,  66 },
-							{190, 6,   171, 15,  253},
-							{28,  55,  153, 21,  120},
-							{91,  276, 231, 136, 78 }  };
-
-
+//Performs cyclic left shift of x for y bits
 uint32_t ROTL32(uint32_t x, uint8_t y)
 {
 	return (((x) << (y)) | ((x) >> ((sizeof(uint32_t)*8) - (y))));
 }
 
+/* Function keccak_round()
+****														 ****
+* @brief: Performs one round of keccak800 (described in NIST).	*
+*		  State matrix A[5][5] changes after each round.		*
+****														 ****
+* @params: A[5][5] - State matrix. Each element is 32 bit long.	*
+*																*
+* @params: RC - Round constant. Number of round is provided by	*
+*				keccak_f800() function below.					*
+****														 ****/
 void keccak_round(uint32_t A[5][5], uint32_t RC)
 {
 	int i = 0;
@@ -33,7 +27,14 @@ void keccak_round(uint32_t A[5][5], uint32_t RC)
 	uint32_t B[5][5];
 	uint32_t C[5];
 	uint32_t D[5];
-	
+
+	//Array of constants for roh step of keccak
+	const uint32_t r[5][5] = {  {0,	  36,  3,   105, 210},
+								{1,   300, 10,  45,  66 },
+								{190, 6,   171, 15,  253},
+								{28,  55,  153, 21,  120},
+								{91,  276, 231, 136, 78 }  };
+
 	for(i = 0; i < 5; i++)
 		C[i] = A[i][0] ^ A[i][1] ^ A[i][2] ^ A[i][3] ^ A[i][4];
 	
@@ -55,19 +56,61 @@ void keccak_round(uint32_t A[5][5], uint32_t RC)
 	A[0][0] = A[0][0] ^ RC;
 }
 
+/* Function keccak_f800()
+****														 ****
+* @brief: Performs 22 rounds of keccak800. 22 rounds comes from	*
+*		  formula 12 + 2*l, where 2^l = 32.						*
+****														 ****
+* @params: A[5][5] - State matrix. A changes its state after	*
+*					 this function.								*
+****														 ****/
 void keccak_f800(uint32_t A[5][5])
 {
+	//Array of round constants for final step of keccak
+	const uint32_t RC[22] = {	0x00000001, 0x00008082, 0x0000808a,
+								0x80008000, 0x0000808b, 0x80000001,
+								0x80008081, 0x00008009, 0x0000008a,
+								0x00000088, 0x80008009, 0x8000000a,
+								0x8000808b, 0x0000008b, 0x00008089,
+								0x00008003, 0x00008002, 0x00000080,
+								0x0000800a, 0x8000000a, 0x80008081,
+								0x00008080};
+
 	int i = 0;
 	for(i = 0; i < 22; i++)
 		keccak_round(A, RC[i]);
 }
 
+/* Function number_of_bytes_to_pad()
+****														 ****
+* @brief: Calculates number of bytes needed to pad input message*
+*		  of SHA3() function.*
+****														 ****
+* @params: rate - Rate in bytes (rate described in NIST).		*
+*																*
+* @params: msg_size_in_bytes - Size of initial message in bytes.*
+****														 ****
+* @return: Number of bytes to pad initial message.				*
+****														 ****/
 int number_of_bytes_to_pad(int rate, int msg_size_in_bytes)
 {
-	return (rate / 8) - (msg_size_in_bytes % (rate / 8));
+	return rate - (msg_size_in_bytes % rate);
 }
 
-void update_state(uint32_t state[5][5], char *P, int rate, int offset)
+/* Function update_state()
+****														 ****
+* @brief: Auxiliary function that sums state with padded message*
+****														 ****
+* @params: A[5][5] - State matrix. A[5][5] is changed after this*
+*					 function.									*
+*																*
+* @params: P - Padded message.									*
+*																*
+* @params: rate - Rate in bytes.								*
+*																*
+* @params: offset - Sets the offset to reads padded message.	*
+****														 ****/
+void update_state(uint32_t A[5][5], char *P, int rate, int offset)
 {
 	int i = 0;
 	int j = 0;
@@ -79,18 +122,33 @@ void update_state(uint32_t state[5][5], char *P, int rate, int offset)
 			for(k = 3; k >= 0; k--)
 				if(l < rate)
 				{
-					state[j][i] = state[j][i] ^ (P[l + offset] << (8*k));
+					A[j][i] = A[j][i] ^ (P[l + offset] << (8*k));
 					l++;
 				}
 }
 
+/* Function SHA3()
+****														 ****
+* @brief: Generates d-bit hash based on input message M. Stores	*
+*		  result in buffer[d / 32].								*
+****														 ****
+* @params: M - Input message. Calculation of hash is based on it*
+*																*
+* @params: d - Size of generated hash. Could be set to 224, 256,*
+*			   384.												*
+*																*
+* @params: buffer - Buffer to store generated hash.				*
+****														 ****/
 void SHA3(char* M, int d, uint32_t buffer[d / 32])
 {
+	if(d % 32 != 0)
+		return;
+
 	int i = 0;
 	int j = 0;
 
 	int capacity = 2 * d;
-	int rate = 800 - capacity;
+	int rate = (800 - capacity) / 8;
 
 	int len = strlen(M);
 	int pad = number_of_bytes_to_pad(rate, len);
@@ -107,8 +165,7 @@ void SHA3(char* M, int d, uint32_t buffer[d / 32])
 
 	P[len + pad - 1] = 0x01;
 
-	int rate_bytes = rate / 8;
-	int n = (len + pad) / rate_bytes;
+	int n = (len + pad) / rate;
 
 	uint32_t S[5][5] = {{0, 0, 0, 0, 0},
 						{0, 0, 0, 0, 0},
@@ -118,73 +175,36 @@ void SHA3(char* M, int d, uint32_t buffer[d / 32])
 
 	for(i = 0; i < n; i++)
 	{
-		update_state(S, P, rate_bytes, i * rate_bytes);
+		update_state(S, P, rate, i * rate);
 		keccak_f800(S);
 	}
 
-	buffer[0] = S[0][0];
-	buffer[1] = S[1][0];
-	buffer[2] = S[2][0];
-	buffer[3] = S[3][0];
-	buffer[4] = S[4][0];
-	buffer[5] = S[0][1];
-	buffer[6] = S[1][1];
-	buffer[7] = S[2][1];
+	for(i = 0; i < d / 32; i++)
+	{
+		if((i % rate == 0) && i)
+			keccak_f800(S);
+
+		buffer[i] = S[i % 5][i / 5];
+	}
 }
 
 int main(int argc, char *argv[])
 {
-	char msg[100] = "";
+	char msg[100] = "You didn't enter message so here's my hash";
 	if(argv[1])
 		strcpy(msg, argv[1]);
 
-	uint32_t buffer[8];
-	SHA3(msg, 256, buffer);
+	int hash_length = 256;
+
+	uint32_t buffer[hash_length / 32];
+	SHA3(msg, hash_length, buffer);
+
+	printf("SHA3-%d for \"%s\":\n", hash_length, msg);
 
 	int i = 0;
-	for(i = 0; i < 8; i++)
+	for(i = 0; i < hash_length / 32; i++)
 		printf("%08x\n", buffer[i]);
 
 	return 0;
 }
-
-/*This code below was used to generate RC matrix
-
-uint16_t rc(int t)
-{
-	int tmp = t % 255;
-	if(tmp == 0)
-		return 1;
-	
-	uint16_t rc = 0x80;
-
-	int i = 0;
-	for(i = 1; i <= tmp; i++)
-	{
-		rc = ((rc & 1) << 8) ^ rc;
-		rc = ((rc & 1) << 4) ^ rc;
-		rc = ((rc & 1) << 3) ^ rc;
-		rc = ((rc & 1) << 2) ^ rc;
-		rc  = rc >> 1;
-	}
-
-	printf("rc = 0x%x\n", rc);
-	return (rc >> 7);
-}
-
-uint32_t create_rc(int round)
-{
-	uint32_t RC = 0;
-
-	int power = 1;
-	int i = 0;
-	for(i = 0; i < 6; i++)
-	{
-		RC += (rc(i + 7 * round)) << (power - 1);
-		power = power * 2;
-	}
-
-	return RC;
-}
-*/
 
